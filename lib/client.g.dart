@@ -6,25 +6,40 @@ part of 'client.dart';
 // JsonSerializableGenerator
 // **************************************************************************
 
-HotData _$HotDataFromJson(Map<String, dynamic> json) {
-  return HotData(
-    after: json['after'] as String?,
-    before: json['before'] as String?,
-    dist: json['dist'] as int,
-    modhash: json['modhash'] as String,
-    children: (json['children'] as List<dynamic>)
-        .map((e) => Link.fromJson(e as Map<String, dynamic>))
-        .toList(),
+Comment _$CommentFromJson(Map<String, dynamic> json) {
+  return Comment(
+    name: json['name'] as String,
+    author: json['author'] as String,
+    body: json['body'] as String,
   );
 }
 
-Map<String, dynamic> _$HotDataToJson(HotData instance) => <String, dynamic>{
-      'after': instance.after,
-      'before': instance.before,
-      'dist': instance.dist,
-      'modhash': instance.modhash,
-      'children': instance.children,
-    };
+Listing<T> _$ListingFromJson<T>(
+  Map<String, dynamic> json,
+  T Function(Object? json) fromJsonT,
+) {
+  return Listing<T>(
+    kind: json['kind'] as String,
+    data: ListingData.fromJson(
+        json['data'] as Map<String, dynamic>, (value) => fromJsonT(value)),
+  );
+}
+
+ListingData<T> _$ListingDataFromJson<T>(
+  Map<String, dynamic> json,
+  T Function(Object? json) fromJsonT,
+) {
+  return ListingData<T>(
+    after: json['after'] as String?,
+    before: json['before'] as String?,
+    dist: json['dist'] as int?,
+    modhash: json['modhash'] as String,
+    children: (json['children'] as List<dynamic>)
+        .map((e) => ListingItem.fromJson(
+            e as Map<String, dynamic>, (value) => fromJsonT(value)))
+        .toList(),
+  );
+}
 
 Preview _$PreviewFromJson(Map<String, dynamic> json) {
   return Preview(
@@ -33,10 +48,6 @@ Preview _$PreviewFromJson(Map<String, dynamic> json) {
         .toList(),
   );
 }
-
-Map<String, dynamic> _$PreviewToJson(Preview instance) => <String, dynamic>{
-      'images': instance.images,
-    };
 
 PreviewImage _$PreviewImageFromJson(Map<String, dynamic> json) {
   return PreviewImage(
@@ -47,12 +58,6 @@ PreviewImage _$PreviewImageFromJson(Map<String, dynamic> json) {
   );
 }
 
-Map<String, dynamic> _$PreviewImageToJson(PreviewImage instance) =>
-    <String, dynamic>{
-      'id': instance.id,
-      'resolutions': instance.resolutions,
-    };
-
 PreviewResolution _$PreviewResolutionFromJson(Map<String, dynamic> json) {
   return PreviewResolution(
     url: json['url'] as String,
@@ -61,15 +66,8 @@ PreviewResolution _$PreviewResolutionFromJson(Map<String, dynamic> json) {
   );
 }
 
-Map<String, dynamic> _$PreviewResolutionToJson(PreviewResolution instance) =>
-    <String, dynamic>{
-      'url': instance.url,
-      'width': instance.width,
-      'height': instance.height,
-    };
-
-LinkData _$LinkDataFromJson(Map<String, dynamic> json) {
-  return LinkData(
+Link _$LinkFromJson(Map<String, dynamic> json) {
+  return Link(
     subreddit: json['subreddit'] as String,
     title: json['title'] as String,
     name: json['name'] as String,
@@ -83,80 +81,27 @@ LinkData _$LinkDataFromJson(Map<String, dynamic> json) {
   );
 }
 
-Map<String, dynamic> _$LinkDataToJson(LinkData instance) => <String, dynamic>{
-      'subreddit': instance.subreddit,
-      'title': instance.title,
-      'name': instance.name,
-      'thumbnail': instance.thumbnail,
-      'preview': instance.preview,
-      'domain': instance.domain,
-      'url': instance.url,
-      'permalink': instance.permalink,
-    };
-
-Link _$LinkFromJson(Map<String, dynamic> json) {
-  return Link(
-    data: LinkData.fromJson(json['data'] as Map<String, dynamic>),
+LinkData _$LinkDataFromJson(Map<String, dynamic> json) {
+  return LinkData(
+    data: Link.fromJson(json['data'] as Map<String, dynamic>),
     kind: json['kind'] as String,
   );
 }
 
-Map<String, dynamic> _$LinkToJson(Link instance) => <String, dynamic>{
-      'kind': instance.kind,
-      'data': instance.data,
-    };
+ListingItem<T> _$ListingItemFromJson<T>(
+  Map<String, dynamic> json,
+  T Function(Object? json) fromJsonT,
+) {
+  return ListingItem<T>(
+    kind: json['kind'] as String,
+    data: fromJsonT(json['data']),
+  );
+}
 
 HotPosts _$HotPostsFromJson(Map<String, dynamic> json) {
   return HotPosts(
     kind: json['kind'] as String,
-    data: HotData.fromJson(json['data'] as Map<String, dynamic>),
+    data: ListingData.fromJson(json['data'] as Map<String, dynamic>,
+        (value) => Link.fromJson(value as Map<String, dynamic>)),
   );
-}
-
-Map<String, dynamic> _$HotPostsToJson(HotPosts instance) => <String, dynamic>{
-      'kind': instance.kind,
-      'data': instance.data,
-    };
-
-// **************************************************************************
-// RetrofitGenerator
-// **************************************************************************
-
-class _RestClient implements RestClient {
-  _RestClient(this._dio, {this.baseUrl}) {
-    baseUrl ??= 'https://www.reddit.com/';
-  }
-
-  final Dio _dio;
-
-  String? baseUrl;
-
-  @override
-  Future<HotPosts> getHot(sub, after, {limit = 25}) async {
-    const _extra = <String, dynamic>{};
-    final queryParameters = <String, dynamic>{r'after': after, r'limit': limit};
-    queryParameters.removeWhere((k, v) => v == null);
-    final _data = <String, dynamic>{};
-    final _result = await _dio.fetch<Map<String, dynamic>>(
-        _setStreamType<HotPosts>(
-            Options(method: 'GET', headers: <String, dynamic>{}, extra: _extra)
-                .compose(_dio.options, '/r/$sub/hot.json',
-                    queryParameters: queryParameters, data: _data)
-                .copyWith(baseUrl: baseUrl ?? _dio.options.baseUrl)));
-    final value = HotPosts.fromJson(_result.data!);
-    return value;
-  }
-
-  RequestOptions _setStreamType<T>(RequestOptions requestOptions) {
-    if (T != dynamic &&
-        !(requestOptions.responseType == ResponseType.bytes ||
-            requestOptions.responseType == ResponseType.stream)) {
-      if (T == String) {
-        requestOptions.responseType = ResponseType.plain;
-      } else {
-        requestOptions.responseType = ResponseType.json;
-      }
-    }
-    return requestOptions;
-  }
 }

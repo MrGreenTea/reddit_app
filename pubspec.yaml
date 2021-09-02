@@ -30,13 +30,13 @@ dependencies:
   cupertino_icons: ^1.0.2
   flutter_hooks: ^0.18.0
   hooks_riverpod: ^1.0.0-dev.7
-  retrofit: ^2.0.1
   infinite_scroll_pagination: ^3.1.0
   json_serializable: ^4.1.4
   url_launcher: ^6.0.9
   beamer: ^0.14.1
   video_player: ^2.1.14
   flick_video_player: ^0.3.1
+  flutter_markdown: ^0.6.6
 
 dev_dependencies:
   flutter_test:

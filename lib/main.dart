@@ -2,12 +2,11 @@ import 'dart:io';
 
 import 'package:beamer/beamer.dart';
 import 'package:dio/dio.dart';
-import 'package:flick_video_player/flick_video_player.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:video_player/video_player.dart';
 
 import 'client.dart';
 
@@ -18,14 +17,18 @@ final pageControllerProvider =
     Provider.family<PagingController<String?, Link>, String>((ref, sub) {
   final client = ref.watch(restClientProvider);
   final controller = PagingController<String?, Link>(
-      firstPageKey: null, invisibleItemsThreshold: 25);
+      firstPageKey: null, invisibleItemsThreshold: 10);
   controller.addPageRequestListener((after) async {
     try {
-      final posts = await client.getHot(sub, after);
+      // TODO: add count to comply more with reddit API suggestions
+      // should just be controller.itemList.length
+      final posts =
+          await client.getHot(sub, after, count: controller.itemList?.length);
+      final newItems = posts.data.children.map((e) => e.data).toList();
       if (posts.data.after == null) {
-        controller.appendLastPage(posts.data.children);
+        controller.appendLastPage(newItems);
       } else {
-        controller.appendPage(posts.data.children, posts.data.after);
+        controller.appendPage(newItems, posts.data.after);
       }
     } catch (error) {
       controller.error = error;
@@ -37,9 +40,10 @@ final pageControllerProvider =
 
 final restClientProvider = Provider<RestClient>((_) {
   final options = BaseOptions(
+    baseUrl: "https://reddit.com",
     headers: {
       HttpHeaders.userAgentHeader:
-          "android:dev.bulik.redditapp:v0.0.1 (by /u/mrgreentea)"
+          "android:dev.bulik.suggarforredditapp:v0.0.1 (by /u/mrgreentea)"
     },
     queryParameters: {"raw_json": 1},
     connectTimeout: 5000,
@@ -60,16 +64,20 @@ final beamerDelegateProvider = Provider<BeamerDelegate>((_) {
           final sub = state.pathParameters['sub']!;
           // Return a Widget or wrap it in a BeamPage for more flexibility
           return BeamPage(
-            key: ValueKey('book-$sub'),
-            title: 'A Book #$sub',
+            key: ValueKey('r/$sub'),
+            title: 'r/$sub',
             popToNamed: '/',
-            type: BeamPageType.scaleTransition,
             child: SubRedditPage(sub: sub),
           );
         },
         '/r/:sub/comments/:postID/:postTitle': (context, state) {
           final sub = state.pathParameters['sub']!;
-          return Text(sub);
+          final postID = state.pathParameters['postID']!;
+          return BeamPage(
+              key: ValueKey('r/$sub/commments/$postID'),
+              child: PostComments(post: state.uri),
+              title: 'r/$sub/comments/$postID',
+              popToNamed: 'r/$sub');
         },
       },
     ),
@@ -89,17 +97,8 @@ class MyApp extends HookConsumerWidget {
     return MaterialApp.router(
       routeInformationParser: BeamerParser(),
       routerDelegate: beamerDelegate,
-      title: 'Flutter Demo',
+      title: 'Sweet Candy for reddit',
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // Try running your application with "flutter run". You'll see the
-        // application has a blue toolbar. Then, without quitting the app, try
-        // changing the primarySwatch below to Colors.green and then invoke
-        // "hot reload" (press "r" in the console where you ran "flutter run",
-        // or simply save your changes to "hot reload" in a Flutter IDE).
-        // Notice that the counter didn't reset back to ze`xro; the application
-        // is not restarted.
         primarySwatch: Colors.green,
       ),
     );
@@ -185,7 +184,7 @@ class SubRedditPage extends HookConsumerWidget {
             pagingController: controller,
             builderDelegate: PagedChildBuilderDelegate<Link>(
               itemBuilder: (context, item, index) {
-                final thumbnail = item.data.preview;
+                final thumbnail = item.preview;
                 return Card(
                   child: Container(
                     height: 300,
@@ -194,7 +193,7 @@ class SubRedditPage extends HookConsumerWidget {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         InkWell(
-                          onTap: () => launchURL(item.data.url),
+                          onTap: () => launchURL(item.url),
                           child: Container(
                             decoration: BoxDecoration(
                                 image: thumbnail != null
@@ -214,7 +213,7 @@ class SubRedditPage extends HookConsumerWidget {
                                   child: Padding(
                                     padding: const EdgeInsets.all(8.0),
                                     child: Text(
-                                      item.data.domain,
+                                      item.domain,
                                       style:
                                           const TextStyle(color: Colors.white),
                                     ),
@@ -224,12 +223,12 @@ class SubRedditPage extends HookConsumerWidget {
                         ),
                         Expanded(
                           child: InkWell(
-                            onTap: () => Beamer.of(context)
-                                .beamToNamed(item.data.permalink),
+                            onTap: () =>
+                                Beamer.of(context).beamToNamed(item.permalink),
                             child: Padding(
                               padding: const EdgeInsets.all(8.0),
                               child: Text(
-                                item.data.title,
+                                item.title,
                                 maxLines: 2,
                                 textScaleFactor: 1.2,
                               ),
@@ -256,35 +255,68 @@ class SubRedditPage extends HookConsumerWidget {
   }
 }
 
-class SamplePlayer extends StatefulWidget {
-  SamplePlayer({Key? key}) : super(key: key);
+class PostComments extends HookConsumerWidget {
+  final Uri post;
+
+  const PostComments({Key? key, required this.post}) : super(key: key);
 
   @override
-  _SamplePlayerState createState() => _SamplePlayerState();
-}
-
-class _SamplePlayerState extends State<SamplePlayer> {
-  late final FlickManager flickManager;
-
-  @override
-  void initState() {
-    super.initState();
-    flickManager = FlickManager(
-      videoPlayerController: VideoPlayerController.network(
-          "https://v.redd.it/t7qlbs9uoxk71/DASHPlaylist.mpd"),
-    );
-  }
-
-  @override
-  void dispose() {
-    flickManager.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      child: FlickVideoPlayer(flickManager: flickManager),
-    );
+  Widget build(BuildContext context, WidgetRef ref) {
+    final client = ref.watch(restClientProvider);
+    return Scaffold(
+        appBar: AppBar(title: const Text("Comments")),
+        body: FutureBuilder(
+          future: client.getComments(this.post),
+          builder: (context, AsyncSnapshot<Comments> snapshot) {
+            List<Widget> children;
+            final data = snapshot.data;
+            if (data != null) {
+              return ListView.builder(
+                  itemCount: data.comments.data.children.length,
+                  itemBuilder: (context, index) => Card(
+                        child: ListTile(
+                            title: MarkdownBody(
+                                onTapLink: (text, href, title) async {
+                                  if (href != null) {
+                                    return launchURL(href);
+                                  }
+                                },
+                                data: data
+                                    .comments.data.children[index].data.body)),
+                      ));
+            } else if (snapshot.hasError) {
+              children = <Widget>[
+                const Icon(
+                  Icons.error_outline,
+                  color: Colors.red,
+                  size: 60,
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 16),
+                  child: Text('Error: ${snapshot.error}'),
+                )
+              ];
+            } else {
+              children = const <Widget>[
+                SizedBox(
+                  child: CircularProgressIndicator(),
+                  width: 60,
+                  height: 60,
+                ),
+                Padding(
+                  padding: EdgeInsets.only(top: 16),
+                  child: Text('Awaiting result...'),
+                )
+              ];
+            }
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: children,
+              ),
+            );
+          },
+        ));
   }
 }

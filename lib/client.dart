@@ -1,50 +1,123 @@
-import 'package:json_annotation/json_annotation.dart';
-import 'package:retrofit/retrofit.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter/material.dart';
+import 'package:json_annotation/json_annotation.dart';
 
 part 'client.g.dart';
 
-@RestApi(baseUrl: "https://www.reddit.com/")
-abstract class RestClient {
-  factory RestClient(Dio dio, {String baseUrl}) = _RestClient;
+class RestClient {
+  Dio dio;
+  RestClient(this.dio);
 
-  @GET("/r/{sub}/hot.json")
-  Future<HotPosts> getHot(
-      @Path("sub") String sub, @Query("after") String? after,
-      {@Query("limit") int limit = 25});
+  Future<HotPosts> getHot(String sub, String? after,
+      {int limit = 25, int? count}) async {
+    final queryParameters = {r'after': after, r'limit': limit, r'count': count};
+    queryParameters.removeWhere((k, v) => v == null);
+    final _result = await dio.get<Map<String, dynamic>>('/r/$sub/hot.json');
+    final value = HotPosts.fromJson(_result.data!);
+    return value;
+  }
+
+  Future<Comments> getComments(Uri permalink) async {
+    debugPrint(permalink.toString());
+    final _result = await dio.get<List<dynamic>>('$permalink.json');
+
+    final value = Comments.fromJson(_result.data!);
+    return value;
+  }
 }
 
-@JsonSerializable()
-class HotData {
+class Comments {
+  Listing<Link> post;
+  Listing<Comment> comments;
+
+  Comments({required this.post, required this.comments});
+
+  factory Comments.fromJson(List<dynamic> json) {
+    if (json is List) {
+      if (json.length != 2) {
+        throw ArgumentError.value(
+          json,
+          'json',
+          'Can only convert list with 2 elements.',
+        );
+      }
+      final post = json.first;
+      final comments = json.last;
+
+      return Comments(
+        post: Listing<Link>.fromJson(
+            post, (j) => Link.fromJson(j as Map<String, dynamic>)),
+        // TODO if there are many comments the last one might be of kind: "more"
+        // that causes a crash here
+        // see for example https://www.reddit.com/r/funny/comments/pg6cy2/outstanding_move.json
+        comments: Listing<Comment>.fromJson(
+            comments, (j) => Comment.fromJson(j as Map<String, dynamic>)),
+      );
+    }
+    throw ArgumentError.value(
+      json,
+      'json',
+      'Can only convert list.',
+    );
+  }
+}
+
+@JsonSerializable(createToJson: false)
+class Comment {
+  String name;
+  String author;
+  String body;
+
+  Comment({required this.name, required this.author, required this.body});
+
+  factory Comment.fromJson(Map<String, dynamic> json) =>
+      _$CommentFromJson(json);
+}
+
+@JsonSerializable(genericArgumentFactories: true, createToJson: false)
+class Listing<T> {
+  String kind;
+  ListingData<T> data;
+
+  Listing({required this.kind, required this.data});
+
+  factory Listing.fromJson(
+          Map<String, dynamic> json, T Function(Object? json) fromJsonT) =>
+      _$ListingFromJson(json, fromJsonT);
+}
+
+@JsonSerializable(genericArgumentFactories: true, createToJson: false)
+class ListingData<T> {
   String? after;
   String? before;
-  int dist;
+  int? dist;
   String modhash;
-  List<Link> children;
+  List<ListingItem<T>> children;
 
-  HotData(
+  ListingData(
       {this.after,
       this.before,
-      required this.dist,
+      this.dist,
       required this.modhash,
       required this.children});
 
-  factory HotData.fromJson(Map<String, dynamic> json) =>
-      _$HotDataFromJson(json);
-  Map<String, dynamic> toJson() => _$HotDataToJson(this);
+  factory ListingData.fromJson(
+    Map<String, dynamic> json,
+    T Function(Object? json) fromJsonT,
+  ) =>
+      _$ListingDataFromJson(json, fromJsonT);
 }
 
-@JsonSerializable()
+@JsonSerializable(createToJson: false)
 class Preview {
   List<PreviewImage> images;
   Preview({required this.images});
 
   factory Preview.fromJson(Map<String, dynamic> json) =>
       _$PreviewFromJson(json);
-  Map<String, dynamic> toJson() => _$PreviewToJson(this);
 }
 
-@JsonSerializable()
+@JsonSerializable(createToJson: false)
 class PreviewImage {
   String id;
   List<PreviewResolution> resolutions;
@@ -53,10 +126,9 @@ class PreviewImage {
 
   factory PreviewImage.fromJson(Map<String, dynamic> json) =>
       _$PreviewImageFromJson(json);
-  Map<String, dynamic> toJson() => _$PreviewImageToJson(this);
 }
 
-@JsonSerializable()
+@JsonSerializable(createToJson: false)
 class PreviewResolution {
   String url;
   int width;
@@ -67,11 +139,10 @@ class PreviewResolution {
 
   factory PreviewResolution.fromJson(Map<String, dynamic> json) =>
       _$PreviewResolutionFromJson(json);
-  Map<String, dynamic> toJson() => _$PreviewResolutionToJson(this);
 }
 
-@JsonSerializable()
-class LinkData {
+@JsonSerializable(createToJson: false)
+class Link {
   String subreddit;
   String title;
   String name;
@@ -82,7 +153,7 @@ class LinkData {
 
   String permalink;
 
-  LinkData(
+  Link(
       {required this.subreddit,
       required this.title,
       required this.name,
@@ -92,29 +163,39 @@ class LinkData {
       required this.permalink,
       this.preview});
 
+  factory Link.fromJson(Map<String, dynamic> json) => _$LinkFromJson(json);
+}
+
+@JsonSerializable(createToJson: false)
+class LinkData {
+  String kind;
+  Link data;
+
+  LinkData({required this.data, required this.kind});
+
   factory LinkData.fromJson(Map<String, dynamic> json) =>
       _$LinkDataFromJson(json);
-  Map<String, dynamic> toJson() => _$LinkDataToJson(this);
 }
 
-@JsonSerializable()
-class Link {
+@JsonSerializable(createToJson: false, genericArgumentFactories: true)
+class ListingItem<T> {
   String kind;
-  LinkData data;
+  T data;
 
-  Link({required this.data, required this.kind});
+  ListingItem({required this.kind, required this.data});
 
-  factory Link.fromJson(Map<String, dynamic> json) => _$LinkFromJson(json);
-  Map<String, dynamic> toJson() => _$LinkToJson(this);
+  factory ListingItem.fromJson(
+          Map<String, dynamic> json, T Function(Object? json) fromJsonT) =>
+      _$ListingItemFromJson(json, fromJsonT);
 }
 
-@JsonSerializable()
+@JsonSerializable(createToJson: false)
 class HotPosts {
   final String kind;
-  final HotData data;
+  final ListingData<Link> data;
+
   HotPosts({required this.kind, required this.data});
 
   factory HotPosts.fromJson(Map<String, dynamic> json) =>
       _$HotPostsFromJson(json);
-  Map<String, dynamic> toJson() => _$HotPostsToJson(this);
 }
