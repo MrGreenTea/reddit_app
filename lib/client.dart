@@ -1,5 +1,4 @@
 import 'package:dio/dio.dart';
-import 'package:flutter/material.dart';
 import 'package:json_annotation/json_annotation.dart';
 
 part 'client.g.dart';
@@ -9,16 +8,17 @@ class RestClient {
   RestClient(this.dio);
 
   Future<HotPosts> getHot(String sub, String? after,
-      {int limit = 25, int? count}) async {
+      {int limit = 25, int? count, CancelToken? cancelToken}) async {
     final queryParameters = {r'after': after, r'limit': limit, r'count': count};
     queryParameters.removeWhere((k, v) => v == null);
-    final _result = await dio.get<Map<String, dynamic>>('/r/$sub/hot.json');
+    final _result = await dio.get<Map<String, dynamic>>('/r/$sub/hot.json',
+        cancelToken: cancelToken);
     final value = HotPosts.fromJson(_result.data!);
     return value;
   }
 
-  Future<Comments> getComments(Uri permalink) async {
-    debugPrint(permalink.toString());
+  Future<Comments> getComments(Uri permalink,
+      {CancelToken? cancelToken}) async {
     final _result = await dio.get<List<dynamic>>('$permalink.json');
 
     final value = Comments.fromJson(_result.data!);
@@ -145,6 +145,7 @@ class PreviewResolution {
 class Link {
   String subreddit;
   String title;
+  String? selftext;
   String name;
   String thumbnail;
   Preview? preview;
@@ -156,6 +157,7 @@ class Link {
   Link(
       {required this.subreddit,
       required this.title,
+      required this.selftext,
       required this.name,
       required this.thumbnail,
       required this.domain,

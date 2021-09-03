@@ -38,13 +38,15 @@ final pageControllerProvider =
   return controller;
 });
 
-final restClientProvider = Provider<RestClient>((_) {
+final userAgentProvider = Provider(
+    (_) => "android:dev.bulik.suggarforredditapp:v0.0.1 (by /u/mrgreentea)");
+
+final restClientProvider = Provider<RestClient>((ref) {
+  final userAgent = ref.watch(userAgentProvider);
+
   final options = BaseOptions(
     baseUrl: "https://reddit.com",
-    headers: {
-      HttpHeaders.userAgentHeader:
-          "android:dev.bulik.suggarforredditapp:v0.0.1 (by /u/mrgreentea)"
-    },
+    headers: {HttpHeaders.userAgentHeader: userAgent},
     queryParameters: {"raw_json": 1},
     connectTimeout: 5000,
     receiveTimeout: 3000,
@@ -52,6 +54,13 @@ final restClientProvider = Provider<RestClient>((_) {
   final dio = Dio(options);
   final client = RestClient(dio);
   return client;
+});
+
+final commentsProvider = FutureProvider.family((ref, Uri permalink) async {
+  final client = ref.watch(restClientProvider);
+  final cancelToken = CancelToken();
+  ref.onDispose(() => cancelToken.cancel());
+  return client.getComments(permalink, cancelToken: cancelToken);
 });
 
 final beamerDelegateProvider = Provider<BeamerDelegate>((_) {
@@ -179,6 +188,7 @@ class SubRedditPage extends HookConsumerWidget {
         // Center is a layout widget. It takes a single child and positions it
         // in the middle of the parent.
         child: RefreshIndicator(
+          // TODO check if we can keep the current list until a new one has been received
           onRefresh: () => Future.sync(() => controller.refresh()),
           child: PagedListView<String?, Link>(
             pagingController: controller,
@@ -225,23 +235,33 @@ class SubRedditPage extends HookConsumerWidget {
                           child: InkWell(
                             onTap: () =>
                                 Beamer.of(context).beamToNamed(item.permalink),
-                            child: Padding(
-                              padding: const EdgeInsets.all(8.0),
-                              child: Text(
-                                item.title,
-                                maxLines: 2,
-                                textScaleFactor: 1.2,
-                              ),
+                            child: Column(
+                              children: [
+                                Expanded(
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(8.0),
+                                    child: Text(
+                                      item.title,
+                                      maxLines: 2,
+                                      textScaleFactor: 1.2,
+                                    ),
+                                  ),
+                                ),
+                                Padding(
+                                  padding: const EdgeInsets.all(8.0),
+                                  child: Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
+                                    children: const [
+                                      Text("↑ comments"),
+                                      Text("↑ ↓ ⋮")
+                                    ],
+                                  ),
+                                )
+                              ],
                             ),
                           ),
                         ),
-                        Padding(
-                          padding: const EdgeInsets.all(8.0),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: const [Text("↑ comments"), Text("↑ ↓ ⋮")],
-                          ),
-                        )
                       ],
                     ),
                   ),
@@ -262,61 +282,69 @@ class PostComments extends HookConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final client = ref.watch(restClientProvider);
+    final comments = ref.watch(commentsProvider(this.post));
+
     return Scaffold(
         appBar: AppBar(title: const Text("Comments")),
-        body: FutureBuilder(
-          future: client.getComments(this.post),
-          builder: (context, AsyncSnapshot<Comments> snapshot) {
-            List<Widget> children;
-            final data = snapshot.data;
-            if (data != null) {
-              return ListView.builder(
-                  itemCount: data.comments.data.children.length,
-                  itemBuilder: (context, index) => Card(
+        body: comments.when(
+            data: (data) => ListView.builder(
+                itemCount: data.comments.data.children.length + 1,
+                itemBuilder: (context, index) {
+                  if (index == 0) {
+                    final post = data.post.data.children.first.data;
+                    final postText = post.selftext;
+                    return Card(
                         child: ListTile(
-                            title: MarkdownBody(
-                                onTapLink: (text, href, title) async {
-                                  if (href != null) {
-                                    return launchURL(href);
-                                  }
-                                },
-                                data: data
-                                    .comments.data.children[index].data.body)),
-                      ));
-            } else if (snapshot.hasError) {
-              children = <Widget>[
-                const Icon(
-                  Icons.error_outline,
-                  color: Colors.red,
-                  size: 60,
+                      title: Text(data.post.data.children.first.data.title),
+                      subtitle: postText == null
+                          ? null
+                          : MarkdownBody(data: postText),
+                    ));
+                  }
+                  return Card(
+                    child: ListTile(
+                        title: MarkdownBody(
+                            onTapLink: (text, href, title) async {
+                              if (href != null) {
+                                return launchURL(href);
+                              }
+                            },
+                            data: data
+                                .comments.data.children[index - 1].data.body)),
+                  );
+                }),
+            loading: () => Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: const <Widget>[
+                      SizedBox(
+                        child: CircularProgressIndicator(),
+                        width: 60,
+                        height: 60,
+                      ),
+                      Padding(
+                        padding: EdgeInsets.only(top: 16),
+                        child: Text('Awaiting result...'),
+                      )
+                    ],
+                  ),
                 ),
-                Padding(
-                  padding: const EdgeInsets.only(top: 16),
-                  child: Text('Error: ${snapshot.error}'),
-                )
-              ];
-            } else {
-              children = const <Widget>[
-                SizedBox(
-                  child: CircularProgressIndicator(),
-                  width: 60,
-                  height: 60,
-                ),
-                Padding(
-                  padding: EdgeInsets.only(top: 16),
-                  child: Text('Awaiting result...'),
-                )
-              ];
-            }
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: children,
-              ),
-            );
-          },
-        ));
+            error: (error, _) => Center(
+                    child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: <Widget>[
+                    const Icon(
+                      Icons.error_outline,
+                      color: Colors.red,
+                      size: 60,
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 16),
+                      child: Text('Error: $error'),
+                    )
+                  ],
+                ))));
   }
 }

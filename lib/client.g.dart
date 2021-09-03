@@ -70,6 +70,7 @@ Link _$LinkFromJson(Map<String, dynamic> json) {
   return Link(
     subreddit: json['subreddit'] as String,
     title: json['title'] as String,
+    selftext: json['selftext'] as String?,
     name: json['name'] as String,
     thumbnail: json['thumbnail'] as String,
     domain: json['domain'] as String,
