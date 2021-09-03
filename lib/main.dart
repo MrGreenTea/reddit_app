@@ -2,35 +2,36 @@ import 'dart:io';
 
 import 'package:beamer/beamer.dart';
 import 'package:dio/dio.dart';
+import 'package:draw/draw.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:infinite_scroll_pagination/infinite_scroll_pagination.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import 'client.dart';
+import 'client.dart' show RestClient;
 
 void launchURL(String url) async =>
     await canLaunch(url) ? await launch(url) : throw 'Could not launch $url';
 
-final pageControllerProvider =
-    Provider.family<PagingController<String?, Link>, String>((ref, sub) {
-  final client = ref.watch(restClientProvider);
-  final controller = PagingController<String?, Link>(
+final pageControllerProvider = Provider.family((ref, String sub) {
+  final client = ref.watch(redditClientProvider);
+
+  final controller = PagingController<String?, Submission>(
       firstPageKey: null, invisibleItemsThreshold: 10);
   controller.addPageRequestListener((after) async {
     try {
-      // TODO: add count to comply more with reddit API suggestions
-      // should just be controller.itemList.length
-      final posts =
-          await client.getHot(sub, after, count: controller.itemList?.length);
-      final newItems = posts.data.children.map((e) => e.data).toList();
-      if (posts.data.after == null) {
+      final posts = await client
+              .then((r) => r.get("/r/$sub.json", params: {"after": after}))
+          as Map<String, dynamic>;
+      final newItems = (posts["listing"] as List<dynamic>).cast<Submission>();
+      if (posts["after"] == null) {
         controller.appendLastPage(newItems);
       } else {
-        controller.appendPage(newItems, posts.data.after);
+        controller.appendPage(newItems, posts["after"]);
       }
-    } catch (error) {
+    } catch (error, stacktrace) {
+      debugPrintStack(stackTrace: stacktrace);
       controller.error = error;
     }
   });
@@ -38,8 +39,33 @@ final pageControllerProvider =
   return controller;
 });
 
+final submissionProvider = Provider.family((ref, Uri url) async {
+  final client = await ref.watch(redditClientProvider);
+  return client.submission(url: url).populate();
+});
+
+final submissionCommentsProvider = FutureProvider.family((ref, Uri url) async {
+  final submission = ref.watch(submissionProvider(url));
+  return submission.then((s) {
+    s.refreshComments();
+    return s.comments;
+  });
+});
+
 final userAgentProvider = Provider(
     (_) => "android:dev.bulik.suggarforredditapp:v0.0.1 (by /u/mrgreentea)");
+
+final clientIDProvider = Provider((_) => "0lKd0OZ91euxIQ");
+
+final deviceIDProvider = Provider((_) => "DO_NOT_TRACK_THIS_DEVICE");
+
+final redditClientProvider = Provider<Future<Reddit>>((ref) {
+  final userAgent = ref.watch(userAgentProvider);
+  final clientID = ref.watch(clientIDProvider);
+  final deviceID = ref.watch(deviceIDProvider);
+  return Reddit.createUntrustedReadOnlyInstance(
+      userAgent: userAgent, clientId: clientID, deviceId: deviceID);
+});
 
 final restClientProvider = Provider<RestClient>((ref) {
   final userAgent = ref.watch(userAgentProvider);
@@ -79,7 +105,7 @@ final beamerDelegateProvider = Provider<BeamerDelegate>((_) {
             child: SubRedditPage(sub: sub),
           );
         },
-        '/r/:sub/comments/:postID/:postTitle': (context, state) {
+        '/r/:sub/comments/:postID': (context, state) {
           final sub = state.pathParameters['sub']!;
           final postID = state.pathParameters['postID']!;
           return BeamPage(
@@ -190,11 +216,11 @@ class SubRedditPage extends HookConsumerWidget {
         child: RefreshIndicator(
           // TODO check if we can keep the current list until a new one has been received
           onRefresh: () => Future.sync(() => controller.refresh()),
-          child: PagedListView<String?, Link>(
+          child: PagedListView(
             pagingController: controller,
-            builderDelegate: PagedChildBuilderDelegate<Link>(
+            builderDelegate: PagedChildBuilderDelegate<Submission>(
+              animateTransitions: true,
               itemBuilder: (context, item, index) {
-                final thumbnail = item.preview;
                 return Card(
                   child: Container(
                     height: 300,
@@ -203,14 +229,15 @@ class SubRedditPage extends HookConsumerWidget {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         InkWell(
-                          onTap: () => launchURL(item.url),
+                          onTap: () => launchURL(item.url.toString()),
                           child: Container(
                             decoration: BoxDecoration(
-                                image: thumbnail != null
+                                image: item.preview.isNotEmpty
                                     ? DecorationImage(
                                         fit: BoxFit.cover,
-                                        image: NetworkImage(thumbnail
-                                            .images[0].resolutions.last.url))
+                                        image: NetworkImage(item
+                                            .preview[0].source.url
+                                            .toString()))
                                     : null),
                             height: 200,
                             width: double.infinity,
@@ -233,8 +260,9 @@ class SubRedditPage extends HookConsumerWidget {
                         ),
                         Expanded(
                           child: InkWell(
-                            onTap: () =>
-                                Beamer.of(context).beamToNamed(item.permalink),
+                            // TODO use draw comments
+                            onTap: () => Beamer.of(context)
+                                .beamToNamed('/r/$sub/comments/${item.id}'),
                             child: Column(
                               children: [
                                 Expanded(
@@ -275,6 +303,12 @@ class SubRedditPage extends HookConsumerWidget {
   }
 }
 
+Future<void> onTapLink(String? text, String? href, String? title) async {
+  if (href != null) {
+    return launchURL(href);
+  }
+}
+
 class PostComments extends HookConsumerWidget {
   final Uri post;
 
@@ -282,37 +316,32 @@ class PostComments extends HookConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final comments = ref.watch(commentsProvider(this.post));
+    final comments = ref.watch(submissionCommentsProvider(this.post));
 
     return Scaffold(
         appBar: AppBar(title: const Text("Comments")),
         body: comments.when(
-            data: (data) => ListView.builder(
-                itemCount: data.comments.data.children.length + 1,
-                itemBuilder: (context, index) {
-                  if (index == 0) {
-                    final post = data.post.data.children.first.data;
-                    final postText = post.selftext;
-                    return Card(
-                        child: ListTile(
-                      title: Text(data.post.data.children.first.data.title),
-                      subtitle: postText == null
-                          ? null
-                          : MarkdownBody(data: postText),
-                    ));
-                  }
-                  return Card(
-                    child: ListTile(
-                        title: MarkdownBody(
-                            onTapLink: (text, href, title) async {
-                              if (href != null) {
-                                return launchURL(href);
-                              }
-                            },
-                            data: data
-                                .comments.data.children[index - 1].data.body)),
-                  );
-                }),
+            data: (data) {
+              final filteredComments = data!.comments
+                  .where((element) => element is Comment)
+                  .cast<Comment>()
+                  .toList(growable: false);
+              return SingleChildScrollView(
+                child: Column(
+                  children: [
+                    MarkdownBody(data: "submission text"),
+                    ListView.builder(
+                        itemCount: filteredComments.length,
+                        itemBuilder: (context, index) => Card(
+                                child: ListTile(
+                              title: MarkdownBody(
+                                  onTapLink: onTapLink,
+                                  data: filteredComments[index].body!),
+                            ))),
+                  ],
+                ),
+              );
+            },
             loading: () => Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,

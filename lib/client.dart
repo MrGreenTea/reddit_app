@@ -5,6 +5,7 @@ part 'client.g.dart';
 
 class RestClient {
   Dio dio;
+
   RestClient(this.dio);
 
   Future<HotPosts> getHot(String sub, String? after,
